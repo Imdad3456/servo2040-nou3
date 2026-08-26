@@ -1,0 +1,52 @@
+name: Build Servo2040 UF2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'chica-servo2040.cpp'
+      - 'chica-servo2040.cmake'
+      - '.github/workflows/build-servo2040.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout bridge source
+        uses: actions/checkout@v4
+
+      - name: Install ARM build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+
+      - name: Checkout Make Your Pet Servo2040 driver base
+        run: |
+          git clone --depth 1 https://github.com/EddieCarrera/chica-servo2040-simpleDriver.git upstream
+          cp chica-servo2040.cpp upstream/chica-servo2040/chica-servo2040.cpp
+          cp chica-servo2040.cmake upstream/chica-servo2040/chica-servo2040.cmake
+
+      - name: Checkout Pico SDK 1.5.1
+        run: |
+          git clone --depth 1 --branch 1.5.1 https://github.com/raspberrypi/pico-sdk.git pico-sdk
+          git -C pico-sdk submodule update --init --recursive --depth 1
+
+      - name: Configure
+        run: |
+          cmake -S upstream -B build -G Ninja -DPICO_SDK_PATH="$GITHUB_WORKSPACE/pico-sdk"
+
+      - name: Build
+        run: |
+          cmake --build build --target chica-servo2040
+
+      - name: Collect UF2
+        run: |
+          mkdir -p out
+          find build -name 'chica-servo2040.uf2' -print -exec cp {} out/Servo2040_NOU3_FlashOnce.uf2 \;
+          test -f out/Servo2040_NOU3_FlashOnce.uf2
+
+      - name: Upload UF2
+        uses: actions/upload-artifact@v4
+        with:
+          name: Servo2040-NOU3-FlashOnce-UF2
+          path: out/Servo2040_NOU3_FlashOnce.uf2

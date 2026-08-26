@@ -52,8 +52,8 @@ constexpr float SENSOR_DIGITAL_THRESHOLD_V = 1.65f;
 constexpr uint32_t ALL_TARGETS_MASK = (1u << NUM_SERVOS) - 1u;
 
 // Servo 2040 QW/ST pins.
-constexpr uint I2C_SDA_PIN = servo2040::SDA; // GP20
-constexpr uint I2C_SCL_PIN = servo2040::SCL; // GP21
+constexpr uint I2C_SDA_PIN = servo2040::I2C_SDA; // GP20
+constexpr uint I2C_SCL_PIN = servo2040::I2C_SCL; // GP21
 
 enum Command : uint8_t {
     CMD_SET_ALL         = 0x01, // [cmd][18 x uint16 little endian]

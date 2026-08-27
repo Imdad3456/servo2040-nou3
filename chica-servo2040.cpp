@@ -37,7 +37,7 @@ using namespace servo;
 // Configuration
 // -----------------------------------------------------------------------------
 
-constexpr uint8_t PROTOCOL_VERSION = 3;
+constexpr uint8_t PROTOCOL_VERSION = 4;
 
 constexpr uint8_t I2C_ADDRESS = 0x31;
 constexpr uint32_t I2C_BAUDRATE = 100000;
@@ -45,6 +45,12 @@ constexpr uint32_t I2C_BAUDRATE = 100000;
 // Servo2040 QW/ST connector pins.
 constexpr uint I2C_SDA_PIN = 20;
 constexpr uint I2C_SCL_PIN = 21;
+
+// Make Your Pet / Eddie Carrera Servo2040 relay output.
+// Chica config uses RELAY P26 1: GPIO26, active HIGH.
+constexpr uint RELAY_PIN = 26;
+constexpr bool RELAY_ACTIVE_HIGH = true;
+constexpr uint32_t RELAY_POWERUP_DELAY_MS = 100;
 
 constexpr uint NUM_SERVOS = 18;
 constexpr uint NUM_SENSORS = 6;
@@ -122,6 +128,7 @@ uint16_t servo_targets[NUM_SERVOS];
 uint32_t valid_target_mask = 0;
 
 bool servo_enabled = false;
+bool relay_enabled = false;
 bool failsafe_latched = false;
 
 uint8_t last_error = ERR_NONE;
@@ -176,9 +183,17 @@ static void set_error(uint8_t error) {
     error_led_until_ms = now_ms() + ERROR_LED_HOLD_MS;
 }
 
+static void set_relay(bool on) {
+    relay_enabled = on;
+    const bool level = RELAY_ACTIVE_HIGH ? on : !on;
+    gpio_put(RELAY_PIN, level);
+}
+
 static void disable_servos(bool because_failsafe) {
+    // Remove PWM first, then remove physical servo power.
     servo_enabled = false;
     servos.disable_all();
+    set_relay(false);
 
     if (because_failsafe) {
         failsafe_latched = true;
@@ -365,10 +380,14 @@ static void process_command(const uint8_t *buf, uint8_t len) {
             }
 
             // Make sure every channel holds its already-clamped target before
-            // torque is enabled.
+            // servo power/PWM is enabled.
             for (uint i = 0; i < NUM_SERVOS; ++i) {
                 servos.pulse(START_PIN + i, servo_targets[i], false);
             }
+
+            // Apply physical servo power first, let the rail settle, then start PWM.
+            set_relay(true);
+            sleep_ms(RELAY_POWERUP_DELAY_MS);
 
             servos.enable_all();
             servo_enabled = true;
@@ -412,8 +431,9 @@ static uint8_t response_byte(uint8_t response, uint8_t index) {
         case RESP_STATUS: {
             // 10 bytes total:
             // [0] protocol version
-            // [1] flags: bit0 enabled, bit1 all-targets-valid,
-            //            bit2 failsafe-latched, bit3 I2C-ready(always 1)
+            // [1] flags: bit0 PWM enabled, bit1 all-targets-valid,
+            //            bit2 failsafe-latched, bit3 I2C-ready(always 1),
+            //            bit4 physical servo-power relay ON
             // [2] last_error
             // [3] sensor high bitmask (bits 0..5)
             // [4..5] milliseconds since last motion/heartbeat, uint16 LE
@@ -423,6 +443,7 @@ static uint8_t response_byte(uint8_t response, uint8_t index) {
             if (servo_enabled) flags |= 0x01;
             if (all_targets_valid()) flags |= 0x02;
             if (failsafe_latched) flags |= 0x04;
+            if (relay_enabled) flags |= 0x10;
 
             uint32_t age32 = now_ms() - last_alive_ms;
             uint16_t age = age32 > 65535u ? 65535u : (uint16_t)age32;
@@ -564,6 +585,11 @@ static void setup_i2c_slave() {
 
 int main() {
     stdio_init_all();
+
+    // Physical servo-power relay: OFF immediately at boot.
+    gpio_init(RELAY_PIN);
+    gpio_set_dir(RELAY_PIN, GPIO_OUT);
+    set_relay(false);
 
     // Servo output setup. Never enable torque during boot.
     for (uint i = 0; i < NUM_SERVOS; ++i) {

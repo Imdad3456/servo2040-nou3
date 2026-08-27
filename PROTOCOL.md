@@ -4,7 +4,7 @@ I2C slave address: `0x31`
 Servo2040 SDA: GP20
 Servo2040 SCL: GP21
 Bus speed: 100 kHz
-Protocol version: 3
+Protocol version: 4
 
 ## Boot behavior
 
@@ -12,6 +12,8 @@ Protocol version: 3
 - Default stored target for every servo is 1500 us.
 - The NOU3 must send valid targets for all 18 channels before ENABLE=1 is accepted.
 - Green LEDs mean the firmware is running and I2C is ready.
+
+The physical servo-power relay is controlled on Servo2040 GPIO26 (active HIGH), matching the Make Your Pet `RELAY P26 1` configuration.
 
 ## Commands written from NOU3 to address 0x31
 
@@ -64,6 +66,7 @@ Then read the documented number of bytes from 0x31.
    bit1 = all 18 targets valid
    bit2 = failsafe latched
    bit3 = I2C ready
+   bit4 = physical servo-power relay ON
 2: last error
 3: six-sensor digital-high bitmask
 4..5: ms since last motion/heartbeat, uint16 LE
@@ -122,3 +125,13 @@ NOU3 handles:
 
 That means calibration, gait changes, controller changes, and sensor logic can
 be changed on the NOU3 without reflashing the Servo2040.
+
+
+## Physical relay behavior
+
+The relay signal is Servo2040 GPIO26 and is active HIGH.
+
+- Boot: relay OFF, PWM OFF.
+- `ENABLE=1`: requires all 18 targets, turns relay ON, waits 100 ms, then enables PWM.
+- `ENABLE=0`: disables PWM first, then turns relay OFF.
+- 500 ms failsafe: disables PWM first, then turns relay OFF.

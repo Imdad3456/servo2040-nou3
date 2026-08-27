@@ -28,6 +28,7 @@
 #include "main.h"
 #include "pico/i2c_slave.h"
 #include "hardware/i2c.h"
+#include "hardware/sync.h"
 
 using namespace plasma;
 using namespace servo;

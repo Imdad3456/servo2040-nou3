@@ -1,59 +1,124 @@
-# NOU3 ↔ Servo 2040 protocol v2
+# Servo2040 ↔ NOU3 Flash-Once Firmware
 
-Servo 2040 I2C slave address: `0x31`  
-Bus: QW/ST / Qwiic, 100 kHz  
-Servo 2040 pins: GP20 = SDA, GP21 = SCL
+I2C slave address: `0x31`
+Servo2040 SDA: GP20
+Servo2040 SCL: GP21
+Bus speed: 100 kHz
+Protocol version: 3
 
-All 16-bit values are little-endian.
+## Boot behavior
 
-## Safety behavior
+- All 18 servo PWM outputs are DISABLED.
+- Default stored target for every servo is 1500 us.
+- The NOU3 must send valid targets for all 18 channels before ENABLE=1 is accepted.
+- Green LEDs mean the firmware is running and I2C is ready.
 
-- PWM is OFF at boot.
-- `ENABLE=1` is rejected until all 18 servo targets have been supplied.
-- Every servo target is clamped to 500–2500 µs.
-- If enabled and no valid SET/ENABLE/HEARTBEAT command arrives for 500 ms, all PWM is disabled.
-- After a failsafe the NOU3 must send `ENABLE=1` again; motion never re-arms automatically.
-- Sensor polarity/threshold decisions stay on the NOU3. Servo 2040 reports raw sensor voltages plus a simple 1.65 V raw-high mask.
+## Commands written from NOU3 to address 0x31
 
-## Commands: NOU3 writes to 0x31
+### 0x01 SET_ALL
+37 bytes total:
 
-| Command | Bytes | Meaning |
-|---|---:|---|
-| `0x01` | 37 | Set all 18 servo targets: command + 18×uint16 pulse µs |
-| `0x02` | 3 + 2×count | Set contiguous range: command, start, count, pulses |
-| `0x03` | 2 | Enable/disable: command, `0` or `1` |
-| `0x04` | 1 | Heartbeat |
-| `0x10` | 2 | Select response for next read: command, response ID |
+`01 S1lo S1hi S2lo S2hi ... S18lo S18hi`
 
-`SET_RANGE` can be used before the first enable; the firmware tracks which of the 18 targets have been supplied and only allows enable after all 18 are valid.
+Every pulse is little-endian uint16 in microseconds.
+Firmware clamps values to 500..2500 us.
+
+This is the recommended normal motion command.
+
+### 0x02 SET_RANGE
+`02 start count value0_lo value0_hi ...`
+
+- start = 0..17
+- count >= 1
+- start + count <= 18
+
+### 0x03 ENABLE
+`03 00` = disable all servo PWM
+`03 01` = enable servo PWM
+
+ENABLE=1 is rejected until all 18 targets have been supplied.
+
+### 0x04 HEARTBEAT
+`04`
+
+Send this whenever the robot is intentionally holding still and SET_ALL is not
+being sent frequently enough.
+
+If servo PWM is enabled and neither a valid motion command nor heartbeat arrives
+for more than 500 ms, all PWM is disabled.
+
+After a failsafe, the firmware requires a new complete set of 18 targets and an
+explicit ENABLE=1.
+
+### 0x10 SELECT_RESPONSE
+`10 response_id`
+
+Then read the documented number of bytes from 0x31.
 
 ## Responses
 
-First write `0x10 <response-id>`, then read the documented number of bytes.
+### 0x80 STATUS — read 10 bytes
+0: protocol version
+1: flags
+   bit0 = servo PWM enabled
+   bit1 = all 18 targets valid
+   bit2 = failsafe latched
+   bit3 = I2C ready
+2: last error
+3: six-sensor digital-high bitmask
+4..5: ms since last motion/heartbeat, uint16 LE
+6..7: measured supply voltage in mV, uint16 LE
+8..9: measured current in mA, uint16 LE
 
-### `0x80` STATUS — 8 bytes
+Errors:
+0 = none
+1 = unknown command
+2 = bad command length
+3 = bad servo range
+4 = enable denied because not all 18 targets are valid
+5 = command overrun
 
-| Byte | Meaning |
-|---:|---|
-| 0 | protocol version (`2`) |
-| 1 | flags: bit0 enabled, bit1 failsafe, bit2 all targets ready |
-| 2 | six-bit raw-high sensor mask |
-| 3 | last error code |
-| 4–5 | servo supply voltage, mV |
-| 6–7 | servo current, mA |
+### 0x81 SENSORS — read 13 bytes
+0: digital-high bitmask for sensors 1..6
+1..12: six sensor input voltages in millivolts, uint16 LE
 
-Error codes: `0` none, `1` bad packet, `2` RX overflow, `3` enable rejected because targets are incomplete, `4` invalid response selector.
+The digital bitmask uses 1.65 V as the threshold. The raw millivolt values let
+the NOU3 invert the logic or choose a different threshold without reflashing the
+Servo2040.
 
-### `0x81` SENSORS — 13 bytes
+### 0x82 POWER — read 4 bytes
+0..1: supply voltage mV, uint16 LE
+2..3: current mA, uint16 LE
 
-- byte 0: raw-high mask
-- bytes 1–12: six sensor voltages in mV (uint16 each)
+### 0x83 TARGETS — read 36 bytes
+18 stored servo pulse widths in microseconds, uint16 LE.
 
-### `0x82` POWER — 4 bytes
+## LED meanings
 
-- bytes 0–1: supply mV
-- bytes 2–3: current mA
+GREEN  = firmware running, I2C ready, servos disabled
+BLUE   = servo PWM enabled
+RED    = failsafe fired
+YELLOW = enable rejected because not all 18 targets were supplied
+PURPLE = malformed/unknown command
 
-### `0x83` TARGETS — 36 bytes
+## Intended division of work
 
-18 commanded pulse widths in µs, uint16 each.
+Servo2040 permanently handles:
+- 18 PWM outputs
+- 6 foot/switch sensor inputs
+- power telemetry
+- I2C communication
+- failsafe
+- diagnostic LEDs
+
+NOU3 handles:
+- calibration
+- inverse kinematics
+- gait generation
+- IMU
+- controller input
+- foot-contact interpretation
+- high-level robot behavior
+
+That means calibration, gait changes, controller changes, and sensor logic can
+be changed on the NOU3 without reflashing the Servo2040.
